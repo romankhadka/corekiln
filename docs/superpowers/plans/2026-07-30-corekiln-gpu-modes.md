@@ -41,7 +41,7 @@ Foundation, Objective-C blocks, Ruby Minitest, Apple Clang
 - Modify: `bin/corekiln`
 - Modify: `test/corekiln_test.rb`
 
-- [ ] **Step 1: Write failing mode and CPU-only tests**
+- [x] **Step 1: Write failing mode and CPU-only tests**
 
 Update the help expectations:
 
@@ -108,7 +108,7 @@ end
 Change the existing timed and interrupt tests to pass `--cpu` and expect the
 CPU-specific startup line.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
@@ -119,7 +119,7 @@ ruby test/corekiln_test.rb --name '/mode|cpu|help|interrupt/'
 Expected: FAIL because the current parser does not recognize mode flags and the
 startup output has no engine label.
 
-- [ ] **Step 3: Define the CPU lifecycle API**
+- [x] **Step 3: Define the CPU lifecycle API**
 
 Create `src/cpu_kiln.h`:
 
@@ -162,7 +162,7 @@ Use `snprintf(error, error_size, ...)` for allocation, `pthread_create`, and
 `pthread_join` failures. A failed start must request stop, join all threads
 already created, and return `false` with no live worker.
 
-- [ ] **Step 4: Add mode parsing and CPU-only orchestration**
+- [x] **Step 4: Add mode parsing and CPU-only orchestration**
 
 Define:
 
@@ -194,7 +194,7 @@ next failing test introduces the Metal engine.
 Preserve the kqueue signal and timer implementation for CPU-only mode, but arm
 the timer after `cpu_kiln_start`.
 
-- [ ] **Step 5: Update direct and wrapper builds**
+- [x] **Step 5: Update direct and wrapper builds**
 
 Change the test compiler source list to:
 
@@ -227,7 +227,7 @@ done
 Compile both C sources. Update the wrapper test to copy the entire `src`
 directory into its temporary repository.
 
-- [ ] **Step 6: Run all tests and verify GREEN**
+- [x] **Step 6: Run all tests and verify GREEN**
 
 Run:
 
@@ -237,7 +237,7 @@ ruby test/corekiln_test.rb
 
 Expected: all CPU, parser, signal, and wrapper tests pass with strict warnings.
 
-- [ ] **Step 7: Commit the CPU engine and modes**
+- [x] **Step 7: Commit the CPU engine and modes**
 
 ```sh
 git add bin/corekiln src/corekiln.c src/cpu_kiln.c src/cpu_kiln.h \
@@ -255,7 +255,7 @@ git commit -m "Add Corekiln resource modes"
 - Modify: `bin/corekiln`
 - Modify: `test/corekiln_test.rb`
 
-- [ ] **Step 1: Write the failing real-GPU test**
+- [x] **Step 1: Write the failing real-GPU test**
 
 Add:
 
@@ -277,7 +277,7 @@ def test_gpu_mode_runs_real_metal_work
 end
 ```
 
-- [ ] **Step 2: Run the GPU test and verify RED**
+- [x] **Step 2: Run the GPU test and verify RED**
 
 Run:
 
@@ -287,7 +287,7 @@ ruby test/corekiln_test.rb --name test_gpu_mode_runs_real_metal_work
 
 Expected: FAIL with `corekiln: GPU engine is unavailable`.
 
-- [ ] **Step 3: Define the GPU lifecycle API**
+- [x] **Step 3: Define the GPU lifecycle API**
 
 Create `src/gpu_kiln.h`:
 
@@ -312,7 +312,7 @@ const char *gpu_kiln_device_name(const gpu_kiln *kiln);
 #endif
 ```
 
-- [ ] **Step 4: Implement Metal preparation**
+- [x] **Step 4: Implement Metal preparation**
 
 Create `src/gpu_kiln.m` with an ARC-managed `CorekilnGPUState` object retained
 behind the opaque C pointer. Its initializer must:
@@ -357,7 +357,7 @@ kernel void corekiln_burn(device float4 *output [[buffer(0)]],
 Return the localized Metal error text through the caller's C error buffer. Do
 not start a submission thread during preparation.
 
-- [ ] **Step 5: Implement continuous command submission**
+- [x] **Step 5: Implement continuous command submission**
 
 The GPU state owns:
 
@@ -402,7 +402,7 @@ When stop is requested, submit no new command. Drain all three slot semaphores
 before the pthread returns. `gpu_kiln_join` fails if the submission thread,
 command status, or zero-completion invariant fails.
 
-- [ ] **Step 6: Integrate GPU-only orchestration**
+- [x] **Step 6: Integrate GPU-only orchestration**
 
 Register the internal event:
 
@@ -418,7 +418,7 @@ queue and event identifier, arm the optional timer, print the device name, wait,
 request stop, join, and destroy. If the returned event is the internal failure
 event, print the GPU failure and exit nonzero.
 
-- [ ] **Step 7: Update Clang and wrapper sources**
+- [x] **Step 7: Update Clang and wrapper sources**
 
 Compile with:
 
@@ -432,7 +432,7 @@ LINKER_FLAGS = ["-framework", "Foundation", "-framework", "Metal"].freeze
 Add `src/gpu_kiln.m` to compiled sources and `src/gpu_kiln.h` to wrapper
 freshness inputs. Use `xcrun clang` in tests and the wrapper.
 
-- [ ] **Step 8: Run all tests and verify GREEN**
+- [x] **Step 8: Run all tests and verify GREEN**
 
 Run:
 
@@ -443,7 +443,7 @@ ruby test/corekiln_test.rb
 Expected: the GPU test compiles the shader, submits real Metal work for one
 second, completes at least one command, and exits cleanly.
 
-- [ ] **Step 9: Commit the Metal engine**
+- [x] **Step 9: Commit the Metal engine**
 
 ```sh
 git add bin/corekiln src/corekiln.c src/gpu_kiln.h src/gpu_kiln.m \
@@ -458,7 +458,7 @@ git commit -m "Add Corekiln Metal workload"
 - Modify: `src/corekiln.c`
 - Modify: `test/corekiln_test.rb`
 
-- [ ] **Step 1: Write failing default and explicit combined tests**
+- [x] **Step 1: Write failing default and explicit combined tests**
 
 Add:
 
@@ -502,7 +502,7 @@ end
 Change the interrupt test to use `--both --workers 1` and expect the combined
 startup line.
 
-- [ ] **Step 2: Run combined tests and verify RED**
+- [x] **Step 2: Run combined tests and verify RED**
 
 Run:
 
@@ -512,7 +512,7 @@ ruby test/corekiln_test.rb --name '/default_mode|explicit_both|interrupt/'
 
 Expected: FAIL because CPU and GPU are not yet started in the same lifecycle.
 
-- [ ] **Step 3: Implement prepare-start-stop-join ordering**
+- [x] **Step 3: Implement prepare-start-stop-join ordering**
 
 In `src/corekiln.c`, determine selected engines with:
 
@@ -541,7 +541,7 @@ For every run:
 Any failure after one engine starts must stop and join that engine before
 returning. Default `options.mode` to `KILN_MODE_BOTH`.
 
-- [ ] **Step 4: Run all tests and verify GREEN**
+- [x] **Step 4: Run all tests and verify GREEN**
 
 Run:
 
@@ -552,7 +552,7 @@ ruby test/corekiln_test.rb
 Expected: CPU-only, GPU-only, default combined, explicit combined, interrupt,
 validation, and wrapper tests all pass.
 
-- [ ] **Step 5: Commit coordinated mode**
+- [x] **Step 5: Commit coordinated mode**
 
 ```sh
 git add src/corekiln.c test/corekiln_test.rb
@@ -565,14 +565,14 @@ git commit -m "Coordinate combined CPU and GPU load"
 
 - Modify: `README.md`
 
-- [ ] **Step 1: Update user documentation**
+- [x] **Step 1: Update user documentation**
 
 Change the opening to state that no arguments load both CPU and GPU. Document
 `--cpu`, `--gpu`, `--both`, the CPU-only meaning of `--workers`, Metal and
 Foundation linking, mode-specific examples, GPU History as observational
 telemetry, and the increased heat/power impact of combined mode.
 
-- [ ] **Step 2: Run the complete automated suite**
+- [x] **Step 2: Run the complete automated suite**
 
 Run:
 
@@ -582,7 +582,7 @@ ruby test/corekiln_test.rb
 
 Expected: zero failures and zero errors.
 
-- [ ] **Step 3: Run strict direct compilation**
+- [x] **Step 3: Run strict direct compilation**
 
 Run:
 
@@ -596,7 +596,7 @@ xcrun clang -std=c11 -O2 -Wall -Wextra -Werror -pthread \
 
 Expected: exit 0 with no warnings.
 
-- [ ] **Step 4: Run all three real-mode smoke tests**
+- [x] **Step 4: Run all three real-mode smoke tests**
 
 Run:
 
@@ -609,7 +609,7 @@ bin/corekiln --both --workers 1 --duration 3
 Expected: each mode reports the selected engines, runs for its requested
 duration, completes real CPU or Metal work, and prints `corekiln: stopped`.
 
-- [ ] **Step 5: Commit documentation**
+- [x] **Step 5: Commit documentation**
 
 ```sh
 git add README.md docs/superpowers/specs/2026-07-30-corekiln-gpu-modes-design.md \
