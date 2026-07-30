@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+repository_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+source_file="$repository_dir/src/corekiln.c"
+build_dir="$repository_dir/.build"
+binary="$build_dir/corekiln"
+
+if [ ! -x "$binary" ] || [ "$source_file" -nt "$binary" ]; then
+  mkdir -p "$build_dir"
+  temporary_binary="$binary.$$"
+  trap 'rm -f "$temporary_binary"' 0 HUP INT TERM
+  cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+    "$source_file" -o "$temporary_binary"
+  mv "$temporary_binary" "$binary"
+  trap - 0 HUP INT TERM
+fi
+
+exec "$binary" "$@"

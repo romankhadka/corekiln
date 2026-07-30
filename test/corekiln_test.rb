@@ -103,6 +103,33 @@ class CorekilnTest < Minitest::Test
     end
   end
 
+  def test_wrapper_builds_and_forwards_arguments
+    Dir.mktmpdir("corekiln-wrapper-test") do |directory|
+      source_wrapper = File.join(ROOT, "bin/corekiln")
+      assert File.file?(source_wrapper), "Expected bin/corekiln to exist"
+
+      FileUtils.mkdir_p(File.join(directory, "bin"))
+      FileUtils.mkdir_p(File.join(directory, "src"))
+      FileUtils.cp(source_wrapper, File.join(directory, "bin"))
+      FileUtils.cp(SOURCE, File.join(directory, "src"))
+      wrapper = File.join(directory, "bin/corekiln")
+      FileUtils.chmod(0o755, wrapper)
+
+      stdout, stderr, status = Open3.capture3(
+        wrapper,
+        "--workers",
+        "1",
+        "--duration",
+        "1",
+      )
+
+      assert status.success?, stderr
+      assert File.executable?(File.join(directory, ".build/corekiln"))
+      assert_includes stdout, "corekiln: burning 1 worker for 1 second"
+      assert_includes stdout, "corekiln: stopped"
+    end
+  end
+
   private
 
   def with_compiled_corekiln
