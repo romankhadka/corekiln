@@ -1,11 +1,16 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/sysctl.h>
+#include <time.h>
+#include <unistd.h>
 
 typedef struct {
   size_t worker_count;
@@ -13,6 +18,13 @@ typedef struct {
   bool worker_count_set;
   bool duration_set;
 } options;
+
+typedef struct {
+  uint64_t seed;
+  volatile uint64_t sink;
+} worker_context;
+
+static atomic_bool stop_requested = false;
 
 static void print_usage(void) {
   puts("Usage: corekiln [--workers N] [--duration SECONDS]");
@@ -85,13 +97,125 @@ static bool parse_options(int argc, char *argv[], options *parsed) {
   return true;
 }
 
+static bool active_cpu_count(size_t *count) {
+  int active = 0;
+  size_t length = sizeof(active);
+
+  if (sysctlbyname("hw.activecpu", &active, &length, NULL, 0) == 0 &&
+      active > 0) {
+    *count = (size_t)active;
+    return true;
+  }
+
+  long online = sysconf(_SC_NPROCESSORS_ONLN);
+  if (online > 0) {
+    *count = (size_t)online;
+    return true;
+  }
+
+  return false;
+}
+
+static void *burn_cpu(void *argument) {
+  worker_context *context = argument;
+  uint64_t state = context->seed;
+
+  while (!atomic_load_explicit(&stop_requested, memory_order_relaxed)) {
+    for (unsigned int iteration = 0; iteration < 4096; iteration++) {
+      state ^= state << 13;
+      state ^= state >> 7;
+      state ^= state << 17;
+      state *= UINT64_C(0x9e3779b97f4a7c15);
+    }
+    context->sink = state;
+  }
+
+  return NULL;
+}
+
+static int run_workers(const options *configuration) {
+  if (!configuration->duration_set) {
+    fputs("corekiln: unbounded workload unavailable\n", stderr);
+    return 3;
+  }
+
+  pthread_t *threads =
+      calloc(configuration->worker_count, sizeof(*threads));
+  worker_context *contexts =
+      calloc(configuration->worker_count, sizeof(*contexts));
+  if (threads == NULL || contexts == NULL) {
+    fputs("corekiln: unable to allocate worker state\n", stderr);
+    free(threads);
+    free(contexts);
+    return 1;
+  }
+
+  atomic_store_explicit(&stop_requested, false, memory_order_relaxed);
+  size_t started = 0;
+  int exit_status = 0;
+
+  for (; started < configuration->worker_count; started++) {
+    contexts[started].seed =
+        UINT64_C(0x9e3779b97f4a7c15) ^ (uint64_t)(started + 1);
+    int error =
+        pthread_create(&threads[started], NULL, burn_cpu, &contexts[started]);
+    if (error != 0) {
+      fprintf(stderr, "corekiln: pthread_create: %s\n", strerror(error));
+      exit_status = 1;
+      break;
+    }
+  }
+
+  if (exit_status == 0) {
+    printf("corekiln: burning %zu %s for %u %s\n",
+           configuration->worker_count,
+           configuration->worker_count == 1 ? "worker" : "workers",
+           configuration->duration_seconds,
+           configuration->duration_seconds == 1 ? "second" : "seconds");
+    fflush(stdout);
+
+    struct timespec remaining = {
+        .tv_sec = configuration->duration_seconds,
+        .tv_nsec = 0,
+    };
+    while (nanosleep(&remaining, &remaining) == -1) {
+      if (errno != EINTR) {
+        perror("corekiln: nanosleep");
+        exit_status = 1;
+        break;
+      }
+    }
+  }
+
+  atomic_store_explicit(&stop_requested, true, memory_order_relaxed);
+  for (size_t index = 0; index < started; index++) {
+    int error = pthread_join(threads[index], NULL);
+    if (error != 0) {
+      fprintf(stderr, "corekiln: pthread_join: %s\n", strerror(error));
+      exit_status = 1;
+    }
+  }
+
+  free(contexts);
+  free(threads);
+
+  if (exit_status == 0) {
+    puts("corekiln: stopped");
+  }
+  return exit_status;
+}
+
 int main(int argc, char *argv[]) {
   options configuration;
   if (!parse_options(argc, argv, &configuration)) {
     return 2;
   }
 
-  (void)configuration;
-  fputs("corekiln: workload unavailable\n", stderr);
-  return 3;
+  if (!configuration.worker_count_set &&
+      !active_cpu_count(&configuration.worker_count)) {
+    fputs("corekiln: unable to discover active logical CPUs\n", stderr);
+    return 1;
+  }
+
+  return run_workers(&configuration);
 }

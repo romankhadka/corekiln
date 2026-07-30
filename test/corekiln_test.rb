@@ -53,6 +53,27 @@ class CorekilnTest < Minitest::Test
     end
   end
 
+  def test_runs_requested_workers_for_the_duration
+    with_compiled_corekiln do |binary|
+      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      stdout, stderr, status = Open3.capture3(
+        binary,
+        "--workers",
+        "2",
+        "--duration",
+        "1",
+      )
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+
+      assert status.success?, stderr
+      assert_operator elapsed, :>=, 0.8
+      assert_operator elapsed, :<, 3.0
+      assert_includes stdout, "corekiln: burning 2 workers for 1 second"
+      assert_includes stdout, "corekiln: stopped"
+      assert_empty stderr
+    end
+  end
+
   private
 
   def with_compiled_corekiln
