@@ -363,6 +363,6 @@ void gpu_kiln_destroy(gpu_kiln *kiln) {
   CFBridgingRelease((void *)kiln);
 }
 
-const char *gpu_kiln_device_name(gpu_kiln *kiln) {
-  return kiln == NULL ? "" : [state_for(kiln) deviceName];
+const char *gpu_kiln_device_name(const gpu_kiln *kiln) {
+  return kiln == NULL ? "" : [state_for((gpu_kiln *)kiln) deviceName];
 }
