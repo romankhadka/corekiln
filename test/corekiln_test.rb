@@ -97,7 +97,7 @@ class CorekilnTest < Minitest::Test
     with_compiled_corekiln do |binary|
       Open3.popen3(
         binary,
-        "--cpu",
+        "--both",
         "--workers",
         "1",
       ) do |stdin, stdout, stderr, wait|
@@ -105,8 +105,8 @@ class CorekilnTest < Minitest::Test
         begin
           startup = Timeout.timeout(5) { stdout.gets }
 
-          assert_equal(
-            "corekiln: burning CPU (1 worker) until interrupted\n",
+          assert_match(
+            /corekiln: burning CPU \(1 worker\) \+ GPU \(.+\) until interrupted/,
             startup,
           )
 
@@ -217,6 +217,47 @@ class CorekilnTest < Minitest::Test
       assert status.success?, stderr
       assert_match(
         /corekiln: burning GPU \(.+\) for 1 second/,
+        stdout,
+      )
+      assert_includes stdout, "corekiln: stopped"
+      assert_empty stderr
+    end
+  end
+
+  def test_default_mode_runs_cpu_and_gpu_together
+    with_compiled_corekiln do |binary|
+      stdout, stderr, status = Open3.capture3(
+        binary,
+        "--workers",
+        "1",
+        "--duration",
+        "1",
+      )
+
+      assert status.success?, stderr
+      assert_match(
+        /corekiln: burning CPU \(1 worker\) \+ GPU \(.+\) for 1 second/,
+        stdout,
+      )
+      assert_includes stdout, "corekiln: stopped"
+      assert_empty stderr
+    end
+  end
+
+  def test_both_mode_runs_cpu_and_gpu_together
+    with_compiled_corekiln do |binary|
+      stdout, stderr, status = Open3.capture3(
+        binary,
+        "--both",
+        "--workers",
+        "1",
+        "--duration",
+        "1",
+      )
+
+      assert status.success?, stderr
+      assert_match(
+        /corekiln: burning CPU \(1 worker\) \+ GPU \(.+\) for 1 second/,
         stdout,
       )
       assert_includes stdout, "corekiln: stopped"
