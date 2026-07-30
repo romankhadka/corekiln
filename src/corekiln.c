@@ -1,4 +1,5 @@
 #include "cpu_kiln.h"
+#include "gpu_kiln.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -27,6 +28,8 @@ typedef struct {
   bool worker_count_set;
   bool duration_set;
 } options;
+
+static const uintptr_t GPU_FAILURE_EVENT = 2;
 
 static void print_usage(void) {
   puts("Usage: corekiln [--cpu | --gpu | --both] [options]");
@@ -169,10 +172,12 @@ static int build_stop_queue(void) {
     return -1;
   }
 
-  struct kevent changes[2];
+  struct kevent changes[3];
   EV_SET(&changes[0], SIGINT, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
   EV_SET(&changes[1], SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-  if (kevent(queue, changes, 2, NULL, 0, NULL) == -1) {
+  EV_SET(&changes[2], GPU_FAILURE_EVENT, EVFILT_USER, EV_ADD | EV_CLEAR,
+         NOTE_FFNOP, 0, NULL);
+  if (kevent(queue, changes, 3, NULL, 0, NULL) == -1) {
     perror("corekiln: kevent registration");
     close(queue);
     return -1;
@@ -214,6 +219,19 @@ static void print_cpu_start(const options *configuration,
   } else {
     printf("corekiln: burning CPU (%zu %s) until interrupted\n", worker_count,
            worker_word);
+  }
+  fflush(stdout);
+}
+
+static void print_gpu_start(const options *configuration,
+                            const char *device_name) {
+  if (configuration->duration_set) {
+    const char *second_word =
+        configuration->duration_seconds == 1 ? "second" : "seconds";
+    printf("corekiln: burning GPU (%s) for %u %s\n", device_name,
+           configuration->duration_seconds, second_word);
+  } else {
+    printf("corekiln: burning GPU (%s) until interrupted\n", device_name);
   }
   fflush(stdout);
 }
@@ -261,22 +279,67 @@ static int run_cpu(const options *configuration) {
   return exit_status;
 }
 
+static int run_gpu(const options *configuration) {
+  char error[512] = {0};
+  gpu_kiln *gpu = gpu_kiln_create(error, sizeof(error));
+  if (gpu == NULL) {
+    fprintf(stderr, "corekiln: %s\n", error);
+    return 1;
+  }
+
+  int queue = build_stop_queue();
+  if (queue == -1) {
+    gpu_kiln_destroy(gpu);
+    return 1;
+  }
+
+  int exit_status = 0;
+  if (!gpu_kiln_start(gpu, queue, GPU_FAILURE_EVENT, error, sizeof(error))) {
+    fprintf(stderr, "corekiln: %s\n", error);
+    exit_status = 1;
+  } else if (configuration->duration_set &&
+             !arm_timer(queue, configuration->duration_seconds)) {
+    exit_status = 1;
+  } else {
+    print_gpu_start(configuration, gpu_kiln_device_name(gpu));
+    if (!wait_for_stop(queue)) {
+      exit_status = 1;
+    }
+  }
+
+  gpu_kiln_request_stop(gpu);
+  if (!gpu_kiln_join(gpu, error, sizeof(error))) {
+    fprintf(stderr, "corekiln: %s\n", error);
+    exit_status = 1;
+  }
+
+  gpu_kiln_destroy(gpu);
+  close(queue);
+  if (exit_status == 0) {
+    puts("corekiln: stopped");
+  }
+  return exit_status;
+}
+
 int main(int argc, char *argv[]) {
   options configuration;
   if (!parse_options(argc, argv, &configuration)) {
     return 2;
   }
 
-  if (configuration.mode != KILN_MODE_CPU) {
+  if (configuration.mode == KILN_MODE_BOTH) {
     fputs("corekiln: GPU engine is unavailable\n", stderr);
     return 1;
   }
 
-  if (!configuration.worker_count_set &&
-      !active_cpu_count(&configuration.worker_count)) {
-    fputs("corekiln: unable to discover active logical CPUs\n", stderr);
-    return 1;
+  if (configuration.mode == KILN_MODE_CPU) {
+    if (!configuration.worker_count_set &&
+        !active_cpu_count(&configuration.worker_count)) {
+      fputs("corekiln: unable to discover active logical CPUs\n", stderr);
+      return 1;
+    }
+    return run_cpu(&configuration);
   }
 
-  return run_cpu(&configuration);
+  return run_gpu(&configuration);
 }

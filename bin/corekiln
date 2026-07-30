@@ -8,13 +8,19 @@ binary="$build_dir/corekiln"
 if [ ! -x "$binary" ] ||
   [ "$repository_dir/src/corekiln.c" -nt "$binary" ] ||
   [ "$repository_dir/src/cpu_kiln.c" -nt "$binary" ] ||
-  [ "$repository_dir/src/cpu_kiln.h" -nt "$binary" ]; then
+  [ "$repository_dir/src/cpu_kiln.h" -nt "$binary" ] ||
+  [ "$repository_dir/src/gpu_kiln.m" -nt "$binary" ] ||
+  [ "$repository_dir/src/gpu_kiln.h" -nt "$binary" ]; then
   mkdir -p "$build_dir"
   temporary_binary="$binary.$$"
   trap 'rm -f "$temporary_binary"' 0 HUP INT TERM
-  cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+  xcrun clang -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+    -fobjc-arc -fblocks \
     "$repository_dir/src/corekiln.c" \
     "$repository_dir/src/cpu_kiln.c" \
+    "$repository_dir/src/gpu_kiln.m" \
+    -framework Foundation \
+    -framework Metal \
     -o "$temporary_binary"
   mv "$temporary_binary" "$binary"
   trap - 0 HUP INT TERM

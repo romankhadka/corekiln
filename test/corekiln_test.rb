@@ -11,8 +11,18 @@ class CorekilnTest < Minitest::Test
   SOURCES = %w[
     src/corekiln.c
     src/cpu_kiln.c
+    src/gpu_kiln.m
   ].map { |path| File.join(ROOT, path) }.freeze
-  COMPILER_FLAGS = %w[-std=c11 -O2 -Wall -Wextra -Werror -pthread].freeze
+  COMPILER_FLAGS = %w[
+    -std=c11
+    -O2
+    -Wall
+    -Wextra
+    -Werror
+    -pthread
+    -fobjc-arc
+    -fblocks
+  ].freeze
 
   def test_help_describes_the_command
     with_compiled_corekiln do |binary|
@@ -195,15 +205,39 @@ class CorekilnTest < Minitest::Test
     end
   end
 
+  def test_gpu_mode_runs_real_metal_work
+    with_compiled_corekiln do |binary|
+      stdout, stderr, status = Open3.capture3(
+        binary,
+        "--gpu",
+        "--duration",
+        "1",
+      )
+
+      assert status.success?, stderr
+      assert_match(
+        /corekiln: burning GPU \(.+\) for 1 second/,
+        stdout,
+      )
+      assert_includes stdout, "corekiln: stopped"
+      assert_empty stderr
+    end
+  end
+
   private
 
   def with_compiled_corekiln
     Dir.mktmpdir("corekiln-test") do |directory|
       binary = File.join(directory, "corekiln")
       _stdout, stderr, status = Open3.capture3(
-        "cc",
+        "xcrun",
+        "clang",
         *COMPILER_FLAGS,
         *SOURCES,
+        "-framework",
+        "Foundation",
+        "-framework",
+        "Metal",
         "-o",
         binary,
       )
