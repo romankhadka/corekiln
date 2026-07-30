@@ -22,6 +22,37 @@ class CorekilnTest < Minitest::Test
     end
   end
 
+  def test_rejects_non_positive_and_non_numeric_values
+    with_compiled_corekiln do |binary|
+      [
+        [%w[--workers 0], "--workers requires a positive integer"],
+        [%w[--workers many], "--workers requires a positive integer"],
+        [%w[--duration 0], "--duration requires a positive integer"],
+        [%w[--duration forever], "--duration requires a positive integer"],
+      ].each do |arguments, expected_error|
+        _stdout, stderr, status = Open3.capture3(binary, *arguments)
+
+        refute status.success?, "Expected #{arguments.inspect} to fail"
+        assert_includes stderr, expected_error
+      end
+    end
+  end
+
+  def test_rejects_missing_values_and_unknown_options
+    with_compiled_corekiln do |binary|
+      [
+        [%w[--workers], "--workers requires a positive integer"],
+        [%w[--duration], "--duration requires a positive integer"],
+        [%w[--unknown], "unknown option: --unknown"],
+      ].each do |arguments, expected_error|
+        _stdout, stderr, status = Open3.capture3(binary, *arguments)
+
+        refute status.success?, "Expected #{arguments.inspect} to fail"
+        assert_includes stderr, expected_error
+      end
+    end
+  end
+
   private
 
   def with_compiled_corekiln
