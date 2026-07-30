@@ -3,6 +3,7 @@
 require "fileutils"
 require "minitest/autorun"
 require "open3"
+require "timeout"
 require "tmpdir"
 
 class CorekilnTest < Minitest::Test
@@ -71,6 +72,34 @@ class CorekilnTest < Minitest::Test
       assert_includes stdout, "corekiln: burning 2 workers for 1 second"
       assert_includes stdout, "corekiln: stopped"
       assert_empty stderr
+    end
+  end
+
+  def test_interrupt_stops_an_unbounded_run
+    with_compiled_corekiln do |binary|
+      Open3.popen3(binary, "--workers", "1") do |stdin, stdout, stderr, wait|
+        stdin.close
+        begin
+          startup = Timeout.timeout(5) { stdout.gets }
+
+          assert_equal "corekiln: burning 1 worker until interrupted\n", startup
+
+          Process.kill("INT", wait.pid)
+          Timeout.timeout(5) { wait.join }
+
+          assert wait.value.success?, stderr.read
+          assert_includes stdout.read, "corekiln: stopped"
+        ensure
+          if wait.alive?
+            begin
+              Process.kill("TERM", wait.pid)
+            rescue Errno::ESRCH
+              nil
+            end
+            wait.join(2)
+          end
+        end
+      end
     end
   end
 

@@ -2,14 +2,15 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/event.h>
 #include <sys/sysctl.h>
-#include <time.h>
 #include <unistd.h>
 
 typedef struct {
@@ -133,10 +134,70 @@ static void *burn_cpu(void *argument) {
   return NULL;
 }
 
+static int build_stop_queue(const options *configuration) {
+  if (signal(SIGINT, SIG_IGN) == SIG_ERR ||
+      signal(SIGTERM, SIG_IGN) == SIG_ERR) {
+    perror("corekiln: signal");
+    return -1;
+  }
+
+  int queue = kqueue();
+  if (queue == -1) {
+    perror("corekiln: kqueue");
+    return -1;
+  }
+
+  struct kevent changes[3];
+  int change_count = 0;
+  EV_SET(&changes[change_count++], SIGINT, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+  EV_SET(&changes[change_count++], SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+
+  if (configuration->duration_set) {
+    EV_SET(&changes[change_count++], 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+           NOTE_SECONDS, configuration->duration_seconds, NULL);
+  }
+
+  if (kevent(queue, changes, change_count, NULL, 0, NULL) == -1) {
+    perror("corekiln: kevent registration");
+    close(queue);
+    return -1;
+  }
+
+  return queue;
+}
+
+static bool wait_for_stop(int queue) {
+  struct kevent event;
+
+  while (kevent(queue, NULL, 0, &event, 1, NULL) == -1) {
+    if (errno != EINTR) {
+      perror("corekiln: kevent wait");
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static void print_start(const options *configuration) {
+  if (configuration->duration_set) {
+    printf("corekiln: burning %zu %s for %u %s\n",
+           configuration->worker_count,
+           configuration->worker_count == 1 ? "worker" : "workers",
+           configuration->duration_seconds,
+           configuration->duration_seconds == 1 ? "second" : "seconds");
+  } else {
+    printf("corekiln: burning %zu %s until interrupted\n",
+           configuration->worker_count,
+           configuration->worker_count == 1 ? "worker" : "workers");
+  }
+  fflush(stdout);
+}
+
 static int run_workers(const options *configuration) {
-  if (!configuration->duration_set) {
-    fputs("corekiln: unbounded workload unavailable\n", stderr);
-    return 3;
+  int queue = build_stop_queue(configuration);
+  if (queue == -1) {
+    return 1;
   }
 
   pthread_t *threads =
@@ -147,6 +208,7 @@ static int run_workers(const options *configuration) {
     fputs("corekiln: unable to allocate worker state\n", stderr);
     free(threads);
     free(contexts);
+    close(queue);
     return 1;
   }
 
@@ -167,23 +229,9 @@ static int run_workers(const options *configuration) {
   }
 
   if (exit_status == 0) {
-    printf("corekiln: burning %zu %s for %u %s\n",
-           configuration->worker_count,
-           configuration->worker_count == 1 ? "worker" : "workers",
-           configuration->duration_seconds,
-           configuration->duration_seconds == 1 ? "second" : "seconds");
-    fflush(stdout);
-
-    struct timespec remaining = {
-        .tv_sec = configuration->duration_seconds,
-        .tv_nsec = 0,
-    };
-    while (nanosleep(&remaining, &remaining) == -1) {
-      if (errno != EINTR) {
-        perror("corekiln: nanosleep");
-        exit_status = 1;
-        break;
-      }
+    print_start(configuration);
+    if (!wait_for_stop(queue)) {
+      exit_status = 1;
     }
   }
 
@@ -198,6 +246,7 @@ static int run_workers(const options *configuration) {
 
   free(contexts);
   free(threads);
+  close(queue);
 
   if (exit_status == 0) {
     puts("corekiln: stopped");
