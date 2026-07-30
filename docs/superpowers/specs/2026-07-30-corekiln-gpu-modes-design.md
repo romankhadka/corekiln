@@ -81,7 +81,8 @@ The executable entrypoint will own:
 
 - command-line parsing and mode validation;
 - active CPU discovery when a selected mode includes CPU;
-- the kqueue containing signal, duration, and internal failure events;
+- the kqueue containing signal and internal failure events;
+- arming the optional duration only after every engine starts;
 - engine startup ordering;
 - user-facing startup and shutdown output; and
 - coordinated cleanup when setup or runtime work fails.
@@ -149,16 +150,18 @@ must complete at least one command buffer.
 ## Lifecycle and Failure Flow
 
 1. Parse and validate all arguments.
-2. Create the kqueue and register `SIGINT`, `SIGTERM`, the optional timer, and
-   an internal `EVFILT_USER` failure event.
-3. Prepare the selected CPU and GPU engines without starting load.
+2. Prepare the selected CPU and GPU engines without starting load.
+3. Create the kqueue and register `SIGINT`, `SIGTERM`, and an internal
+   `EVFILT_USER` failure event.
 4. Start every selected engine.
-5. Print the selected mode, CPU worker count where applicable, GPU name where
+5. Arm the optional duration timer so shader compilation and resource
+   preparation do not consume the requested workload duration.
+6. Print the selected mode, CPU worker count where applicable, GPU name where
    applicable, and stop condition.
-6. Wait for a signal, duration expiry, or internal engine failure.
-7. Request both engines to stop.
-8. Join CPU workers, drain GPU commands, and destroy both engines.
-9. Exit successfully only if all selected engines ran and stopped cleanly.
+7. Wait for a signal, duration expiry, or internal engine failure.
+8. Request both engines to stop before joining either one.
+9. Join CPU workers, drain GPU commands, and destroy both engines.
+10. Exit successfully only if all selected engines ran and stopped cleanly.
 
 If the GPU submission thread detects command-buffer failure, it stores a
 stable error message under its state mutex and then triggers the internal
