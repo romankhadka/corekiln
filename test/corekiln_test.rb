@@ -8,7 +8,10 @@ require "tmpdir"
 
 class CorekilnTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
-  SOURCE = File.join(ROOT, "src/corekiln.c")
+  SOURCES = %w[
+    src/corekiln.c
+    src/cpu_kiln.c
+  ].map { |path| File.join(ROOT, path) }.freeze
   COMPILER_FLAGS = %w[-std=c11 -O2 -Wall -Wextra -Werror -pthread].freeze
 
   def test_help_describes_the_command
@@ -17,6 +20,10 @@ class CorekilnTest < Minitest::Test
 
       assert status.success?, stderr
       assert_includes stdout, "Usage: corekiln"
+      assert_includes stdout, "--cpu"
+      assert_includes stdout, "--gpu"
+      assert_includes stdout, "--both"
+      assert_includes stdout, "Default: --both"
       assert_includes stdout, "--workers N"
       assert_includes stdout, "--duration SECONDS"
       assert_empty stderr
@@ -59,6 +66,7 @@ class CorekilnTest < Minitest::Test
       started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       stdout, stderr, status = Open3.capture3(
         binary,
+        "--cpu",
         "--workers",
         "2",
         "--duration",
@@ -69,7 +77,7 @@ class CorekilnTest < Minitest::Test
       assert status.success?, stderr
       assert_operator elapsed, :>=, 0.8
       assert_operator elapsed, :<, 3.0
-      assert_includes stdout, "corekiln: burning 2 workers for 1 second"
+      assert_includes stdout, "corekiln: burning CPU (2 workers) for 1 second"
       assert_includes stdout, "corekiln: stopped"
       assert_empty stderr
     end
@@ -77,12 +85,20 @@ class CorekilnTest < Minitest::Test
 
   def test_interrupt_stops_an_unbounded_run
     with_compiled_corekiln do |binary|
-      Open3.popen3(binary, "--workers", "1") do |stdin, stdout, stderr, wait|
+      Open3.popen3(
+        binary,
+        "--cpu",
+        "--workers",
+        "1",
+      ) do |stdin, stdout, stderr, wait|
         stdin.close
         begin
           startup = Timeout.timeout(5) { stdout.gets }
 
-          assert_equal "corekiln: burning 1 worker until interrupted\n", startup
+          assert_equal(
+            "corekiln: burning CPU (1 worker) until interrupted\n",
+            startup,
+          )
 
           Process.kill("INT", wait.pid)
           Timeout.timeout(5) { wait.join }
@@ -109,14 +125,14 @@ class CorekilnTest < Minitest::Test
       assert File.file?(source_wrapper), "Expected bin/corekiln to exist"
 
       FileUtils.mkdir_p(File.join(directory, "bin"))
-      FileUtils.mkdir_p(File.join(directory, "src"))
       FileUtils.cp(source_wrapper, File.join(directory, "bin"))
-      FileUtils.cp(SOURCE, File.join(directory, "src"))
+      FileUtils.cp_r(File.join(ROOT, "src"), directory)
       wrapper = File.join(directory, "bin/corekiln")
       FileUtils.chmod(0o755, wrapper)
 
       stdout, stderr, status = Open3.capture3(
         wrapper,
+        "--cpu",
         "--workers",
         "1",
         "--duration",
@@ -125,7 +141,56 @@ class CorekilnTest < Minitest::Test
 
       assert status.success?, stderr
       assert File.executable?(File.join(directory, ".build/corekiln"))
-      assert_includes stdout, "corekiln: burning 1 worker for 1 second"
+      assert_includes stdout, "corekiln: burning CPU (1 worker) for 1 second"
+      assert_includes stdout, "corekiln: stopped"
+    end
+  end
+
+  def test_rejects_duplicate_and_conflicting_modes
+    with_compiled_corekiln do |binary|
+      [
+        %w[--cpu --cpu],
+        %w[--cpu --gpu],
+        %w[--gpu --both],
+        %w[--both --cpu],
+      ].each do |arguments|
+        _stdout, stderr, status = Open3.capture3(binary, *arguments)
+
+        refute status.success?, "Expected #{arguments.inspect} to fail"
+        assert_includes stderr, "only one mode may be specified"
+      end
+    end
+  end
+
+  def test_rejects_workers_in_gpu_only_mode
+    with_compiled_corekiln do |binary|
+      _stdout, stderr, status = Open3.capture3(
+        binary,
+        "--gpu",
+        "--workers",
+        "1",
+        "--duration",
+        "1",
+      )
+
+      refute status.success?
+      assert_includes stderr, "--workers requires a CPU mode"
+    end
+  end
+
+  def test_cpu_mode_runs_requested_workers
+    with_compiled_corekiln do |binary|
+      stdout, stderr, status = Open3.capture3(
+        binary,
+        "--cpu",
+        "--workers",
+        "1",
+        "--duration",
+        "1",
+      )
+
+      assert status.success?, stderr
+      assert_includes stdout, "corekiln: burning CPU (1 worker) for 1 second"
       assert_includes stdout, "corekiln: stopped"
     end
   end
@@ -138,7 +203,7 @@ class CorekilnTest < Minitest::Test
       _stdout, stderr, status = Open3.capture3(
         "cc",
         *COMPILER_FLAGS,
-        SOURCE,
+        *SOURCES,
         "-o",
         binary,
       )

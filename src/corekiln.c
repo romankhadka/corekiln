@@ -1,39 +1,46 @@
+#include "cpu_kiln.h"
+
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
-#include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/event.h>
 #include <sys/sysctl.h>
 #include <unistd.h>
 
+typedef enum {
+  KILN_MODE_BOTH,
+  KILN_MODE_CPU,
+  KILN_MODE_GPU,
+} kiln_mode;
+
 typedef struct {
+  kiln_mode mode;
+  bool mode_set;
   size_t worker_count;
   unsigned int duration_seconds;
   bool worker_count_set;
   bool duration_set;
 } options;
 
-typedef struct {
-  uint64_t seed;
-  volatile uint64_t sink;
-} worker_context;
-
-static atomic_bool stop_requested = false;
-
 static void print_usage(void) {
-  puts("Usage: corekiln [--workers N] [--duration SECONDS]");
+  puts("Usage: corekiln [--cpu | --gpu | --both] [options]");
   puts("");
-  puts("Keep macOS logical CPUs continuously busy.");
+  puts("Keep macOS compute resources continuously busy.");
+  puts("");
+  puts("Modes:");
+  puts("  --cpu                Load CPU only");
+  puts("  --gpu                Load GPU only");
+  puts("  --both               Load CPU and GPU");
+  puts("                       Default: --both");
   puts("");
   puts("Options:");
-  puts("  --workers N          Number of worker threads");
+  puts("  --workers N          Number of CPU worker threads");
   puts("  --duration SECONDS   Stop after a positive whole number of seconds");
   puts("  --help               Show this help");
 }
@@ -56,8 +63,19 @@ static bool parse_positive_integer(const char *text, uintmax_t maximum,
   return true;
 }
 
+static bool set_mode(options *parsed, kiln_mode mode) {
+  if (parsed->mode_set) {
+    fputs("corekiln: only one mode may be specified\n", stderr);
+    return false;
+  }
+
+  parsed->mode = mode;
+  parsed->mode_set = true;
+  return true;
+}
+
 static bool parse_options(int argc, char *argv[], options *parsed) {
-  *parsed = (options){0};
+  *parsed = (options){.mode = KILN_MODE_BOTH};
 
   for (int index = 1; index < argc; index++) {
     const char *argument = argv[index];
@@ -66,7 +84,24 @@ static bool parse_options(int argc, char *argv[], options *parsed) {
       print_usage();
       exit(0);
     }
-
+    if (strcmp(argument, "--cpu") == 0) {
+      if (!set_mode(parsed, KILN_MODE_CPU)) {
+        return false;
+      }
+      continue;
+    }
+    if (strcmp(argument, "--gpu") == 0) {
+      if (!set_mode(parsed, KILN_MODE_GPU)) {
+        return false;
+      }
+      continue;
+    }
+    if (strcmp(argument, "--both") == 0) {
+      if (!set_mode(parsed, KILN_MODE_BOTH)) {
+        return false;
+      }
+      continue;
+    }
     if (strcmp(argument, "--workers") == 0) {
       uintmax_t worker_count = 0;
       if (++index >= argc ||
@@ -78,7 +113,6 @@ static bool parse_options(int argc, char *argv[], options *parsed) {
       parsed->worker_count_set = true;
       continue;
     }
-
     if (strcmp(argument, "--duration") == 0) {
       uintmax_t duration = 0;
       if (++index >= argc ||
@@ -92,6 +126,11 @@ static bool parse_options(int argc, char *argv[], options *parsed) {
     }
 
     fprintf(stderr, "corekiln: unknown option: %s\n", argument);
+    return false;
+  }
+
+  if (parsed->mode == KILN_MODE_GPU && parsed->worker_count_set) {
+    fputs("corekiln: --workers requires a CPU mode\n", stderr);
     return false;
   }
 
@@ -117,24 +156,7 @@ static bool active_cpu_count(size_t *count) {
   return false;
 }
 
-static void *burn_cpu(void *argument) {
-  worker_context *context = argument;
-  uint64_t state = context->seed;
-
-  while (!atomic_load_explicit(&stop_requested, memory_order_relaxed)) {
-    for (unsigned int iteration = 0; iteration < 4096; iteration++) {
-      state ^= state << 13;
-      state ^= state >> 7;
-      state ^= state << 17;
-      state *= UINT64_C(0x9e3779b97f4a7c15);
-    }
-    context->sink = state;
-  }
-
-  return NULL;
-}
-
-static int build_stop_queue(const options *configuration) {
+static int build_stop_queue(void) {
   if (signal(SIGINT, SIG_IGN) == SIG_ERR ||
       signal(SIGTERM, SIG_IGN) == SIG_ERR) {
     perror("corekiln: signal");
@@ -147,17 +169,10 @@ static int build_stop_queue(const options *configuration) {
     return -1;
   }
 
-  struct kevent changes[3];
-  int change_count = 0;
-  EV_SET(&changes[change_count++], SIGINT, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-  EV_SET(&changes[change_count++], SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-
-  if (configuration->duration_set) {
-    EV_SET(&changes[change_count++], 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
-           NOTE_SECONDS, configuration->duration_seconds, NULL);
-  }
-
-  if (kevent(queue, changes, change_count, NULL, 0, NULL) == -1) {
+  struct kevent changes[2];
+  EV_SET(&changes[0], SIGINT, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+  EV_SET(&changes[1], SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+  if (kevent(queue, changes, 2, NULL, 0, NULL) == -1) {
     perror("corekiln: kevent registration");
     close(queue);
     return -1;
@@ -166,88 +181,80 @@ static int build_stop_queue(const options *configuration) {
   return queue;
 }
 
+static bool arm_timer(int queue, unsigned int duration_seconds) {
+  struct kevent timer;
+  EV_SET(&timer, 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT, NOTE_SECONDS,
+         duration_seconds, NULL);
+  if (kevent(queue, &timer, 1, NULL, 0, NULL) == -1) {
+    perror("corekiln: timer registration");
+    return false;
+  }
+  return true;
+}
+
 static bool wait_for_stop(int queue) {
   struct kevent event;
-
   while (kevent(queue, NULL, 0, &event, 1, NULL) == -1) {
     if (errno != EINTR) {
       perror("corekiln: kevent wait");
       return false;
     }
   }
-
   return true;
 }
 
-static void print_start(const options *configuration) {
+static void print_cpu_start(const options *configuration,
+                            size_t worker_count) {
+  const char *worker_word = worker_count == 1 ? "worker" : "workers";
   if (configuration->duration_set) {
-    printf("corekiln: burning %zu %s for %u %s\n",
-           configuration->worker_count,
-           configuration->worker_count == 1 ? "worker" : "workers",
-           configuration->duration_seconds,
-           configuration->duration_seconds == 1 ? "second" : "seconds");
+    const char *second_word =
+        configuration->duration_seconds == 1 ? "second" : "seconds";
+    printf("corekiln: burning CPU (%zu %s) for %u %s\n", worker_count,
+           worker_word, configuration->duration_seconds, second_word);
   } else {
-    printf("corekiln: burning %zu %s until interrupted\n",
-           configuration->worker_count,
-           configuration->worker_count == 1 ? "worker" : "workers");
+    printf("corekiln: burning CPU (%zu %s) until interrupted\n", worker_count,
+           worker_word);
   }
   fflush(stdout);
 }
 
-static int run_workers(const options *configuration) {
-  int queue = build_stop_queue(configuration);
+static int run_cpu(const options *configuration) {
+  char error[512] = {0};
+  cpu_kiln *cpu =
+      cpu_kiln_create(configuration->worker_count, error, sizeof(error));
+  if (cpu == NULL) {
+    fprintf(stderr, "corekiln: %s\n", error);
+    return 1;
+  }
+
+  int queue = build_stop_queue();
   if (queue == -1) {
+    cpu_kiln_destroy(cpu);
     return 1;
   }
 
-  pthread_t *threads =
-      calloc(configuration->worker_count, sizeof(*threads));
-  worker_context *contexts =
-      calloc(configuration->worker_count, sizeof(*contexts));
-  if (threads == NULL || contexts == NULL) {
-    fputs("corekiln: unable to allocate worker state\n", stderr);
-    free(threads);
-    free(contexts);
-    close(queue);
-    return 1;
-  }
-
-  atomic_store_explicit(&stop_requested, false, memory_order_relaxed);
-  size_t started = 0;
   int exit_status = 0;
-
-  for (; started < configuration->worker_count; started++) {
-    contexts[started].seed =
-        UINT64_C(0x9e3779b97f4a7c15) ^ (uint64_t)(started + 1);
-    int error =
-        pthread_create(&threads[started], NULL, burn_cpu, &contexts[started]);
-    if (error != 0) {
-      fprintf(stderr, "corekiln: pthread_create: %s\n", strerror(error));
-      exit_status = 1;
-      break;
-    }
-  }
-
-  if (exit_status == 0) {
-    print_start(configuration);
+  if (!cpu_kiln_start(cpu, error, sizeof(error))) {
+    fprintf(stderr, "corekiln: %s\n", error);
+    exit_status = 1;
+  } else if (configuration->duration_set &&
+             !arm_timer(queue, configuration->duration_seconds)) {
+    exit_status = 1;
+  } else {
+    print_cpu_start(configuration, cpu_kiln_worker_count(cpu));
     if (!wait_for_stop(queue)) {
       exit_status = 1;
     }
   }
 
-  atomic_store_explicit(&stop_requested, true, memory_order_relaxed);
-  for (size_t index = 0; index < started; index++) {
-    int error = pthread_join(threads[index], NULL);
-    if (error != 0) {
-      fprintf(stderr, "corekiln: pthread_join: %s\n", strerror(error));
-      exit_status = 1;
-    }
+  cpu_kiln_request_stop(cpu);
+  if (!cpu_kiln_join(cpu, error, sizeof(error))) {
+    fprintf(stderr, "corekiln: %s\n", error);
+    exit_status = 1;
   }
 
-  free(contexts);
-  free(threads);
+  cpu_kiln_destroy(cpu);
   close(queue);
-
   if (exit_status == 0) {
     puts("corekiln: stopped");
   }
@@ -260,11 +267,16 @@ int main(int argc, char *argv[]) {
     return 2;
   }
 
+  if (configuration.mode != KILN_MODE_CPU) {
+    fputs("corekiln: GPU engine is unavailable\n", stderr);
+    return 1;
+  }
+
   if (!configuration.worker_count_set &&
       !active_cpu_count(&configuration.worker_count)) {
     fputs("corekiln: unable to discover active logical CPUs\n", stderr);
     return 1;
   }
 
-  return run_workers(&configuration);
+  return run_cpu(&configuration);
 }
