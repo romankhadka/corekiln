@@ -617,7 +617,7 @@ git add README.md docs/superpowers/specs/2026-07-30-corekiln-gpu-modes-design.md
 git commit -m "Document Corekiln GPU modes"
 ```
 
-- [ ] **Step 6: Merge through Worktrunk and verify main**
+- [x] **Step 6: Merge through Worktrunk and verify main**
 
 From the implementation worktree:
 
@@ -628,7 +628,7 @@ wt merge main --no-squash --yes
 Then run the full test suite and strict direct compilation from
 `/Users/roman/code/corekiln`.
 
-- [ ] **Step 7: Push and verify the remote**
+- [x] **Step 7: Push and verify the remote**
 
 Run:
 
