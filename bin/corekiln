@@ -10,7 +10,11 @@ if [ ! -x "$binary" ] ||
   [ "$repository_dir/src/cpu_kiln.c" -nt "$binary" ] ||
   [ "$repository_dir/src/cpu_kiln.h" -nt "$binary" ] ||
   [ "$repository_dir/src/gpu_kiln.m" -nt "$binary" ] ||
-  [ "$repository_dir/src/gpu_kiln.h" -nt "$binary" ]; then
+  [ "$repository_dir/src/gpu_kiln.h" -nt "$binary" ] ||
+  [ "$repository_dir/src/run_report.c" -nt "$binary" ] ||
+  [ "$repository_dir/src/run_report.h" -nt "$binary" ] ||
+  [ "$repository_dir/src/system_thermal.m" -nt "$binary" ] ||
+  [ "$repository_dir/src/system_thermal.h" -nt "$binary" ]; then
   mkdir -p "$build_dir"
   temporary_binary="$binary.$$"
   trap 'rm -f "$temporary_binary"' 0 HUP INT TERM
@@ -19,6 +23,8 @@ if [ ! -x "$binary" ] ||
     "$repository_dir/src/corekiln.c" \
     "$repository_dir/src/cpu_kiln.c" \
     "$repository_dir/src/gpu_kiln.m" \
+    "$repository_dir/src/run_report.c" \
+    "$repository_dir/src/system_thermal.m" \
     -framework Foundation \
     -framework Metal \
     -o "$temporary_binary"

@@ -1,5 +1,7 @@
 #include "cpu_kiln.h"
 #include "gpu_kiln.h"
+#include "run_report.h"
+#include "system_thermal.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -12,6 +14,7 @@
 #include <string.h>
 #include <sys/event.h>
 #include <sys/sysctl.h>
+#include <time.h>
 #include <unistd.h>
 
 typedef enum {
@@ -31,7 +34,9 @@ typedef struct {
   bool status_set;
 } options;
 
+static const uintptr_t DURATION_EVENT = 1;
 static const uintptr_t GPU_FAILURE_EVENT = 2;
+static const uintptr_t STATUS_EVENT = 3;
 
 static void print_usage(void) {
   puts("Usage: corekiln [--cpu | --gpu | --both] [options]");
@@ -203,8 +208,8 @@ static int build_stop_queue(void) {
 
 static bool arm_timer(int queue, unsigned int duration_seconds) {
   struct kevent timer;
-  EV_SET(&timer, 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT, NOTE_SECONDS,
-         duration_seconds, NULL);
+  EV_SET(&timer, DURATION_EVENT, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+         NOTE_SECONDS, duration_seconds, NULL);
   if (kevent(queue, &timer, 1, NULL, 0, NULL) == -1) {
     perror("corekiln: timer registration");
     return false;
@@ -212,15 +217,68 @@ static bool arm_timer(int queue, unsigned int duration_seconds) {
   return true;
 }
 
-static bool wait_for_stop(int queue) {
-  struct kevent event;
-  while (kevent(queue, NULL, 0, &event, 1, NULL) == -1) {
-    if (errno != EINTR) {
-      perror("corekiln: kevent wait");
-      return false;
-    }
+static bool arm_status_timer(int queue) {
+  struct kevent timer;
+  EV_SET(&timer, STATUS_EVENT, EVFILT_TIMER, EV_ADD, NOTE_SECONDS, 1, NULL);
+  if (kevent(queue, &timer, 1, NULL, 0, NULL) == -1) {
+    perror("corekiln: status timer registration");
+    return false;
   }
   return true;
+}
+
+static run_snapshot take_snapshot(const cpu_kiln *cpu,
+                                  const gpu_kiln *gpu) {
+  return (run_snapshot){
+      .cpu_selected = cpu != NULL,
+      .cpu_work_units = cpu_kiln_completed_work_units(cpu),
+      .gpu_selected = gpu != NULL,
+      .gpu_dispatches = gpu_kiln_completed_dispatches(gpu),
+      .thermal = system_thermal_current(),
+  };
+}
+
+static bool monotonic_now(struct timespec *now) {
+  if (clock_gettime(CLOCK_MONOTONIC, now) == 0) {
+    return true;
+  }
+  perror("corekiln: monotonic clock");
+  return false;
+}
+
+static run_stop_reason wait_for_stop(int queue, run_report *report,
+                                     cpu_kiln *cpu, gpu_kiln *gpu) {
+  while (true) {
+    struct kevent event;
+    if (kevent(queue, NULL, 0, &event, 1, NULL) == -1) {
+      if (errno == EINTR) {
+        continue;
+      }
+      perror("corekiln: kevent wait");
+      return RUN_STOP_WAIT_ERROR;
+    }
+
+    if (event.filter == EVFILT_SIGNAL) {
+      return event.ident == SIGINT ? RUN_STOP_INTERRUPT : RUN_STOP_TERMINATE;
+    }
+    if (event.filter == EVFILT_USER && event.ident == GPU_FAILURE_EVENT) {
+      return RUN_STOP_GPU_FAILURE;
+    }
+    if (event.filter == EVFILT_TIMER && event.ident == DURATION_EVENT) {
+      return RUN_STOP_DURATION;
+    }
+    if (event.filter == EVFILT_TIMER && event.ident == STATUS_EVENT &&
+        report != NULL) {
+      struct timespec now;
+      if (!monotonic_now(&now)) {
+        return RUN_STOP_WAIT_ERROR;
+      }
+      run_snapshot snapshot = take_snapshot(cpu, gpu);
+      if (run_report_observe(report, now, snapshot)) {
+        run_report_print_status(report, now, snapshot);
+      }
+    }
+  }
 }
 
 static bool mode_uses_cpu(kiln_mode mode) {
@@ -263,6 +321,11 @@ static int run_kilns(const options *configuration) {
   gpu_kiln *gpu = NULL;
   int queue = -1;
   int exit_status = 1;
+  bool cpu_joined = true;
+  bool gpu_joined = true;
+  run_report report;
+  run_report *active_report = NULL;
+  run_stop_reason stop_reason = RUN_STOP_WAIT_ERROR;
 
   if (mode_uses_cpu(configuration->mode)) {
     cpu = cpu_kiln_create(configuration->worker_count, cpu_error,
@@ -301,9 +364,23 @@ static int run_kilns(const options *configuration) {
       !arm_timer(queue, configuration->duration_seconds)) {
     goto cleanup;
   }
+  if (configuration->status_set) {
+    struct timespec started_at;
+    if (!monotonic_now(&started_at)) {
+      goto cleanup;
+    }
+    run_report_initialize(&report, configuration->status_seconds, started_at,
+                          take_snapshot(cpu, gpu));
+    if (!arm_status_timer(queue)) {
+      goto cleanup;
+    }
+    active_report = &report;
+  }
 
   print_start(configuration, cpu, gpu);
-  if (wait_for_stop(queue)) {
+  stop_reason = wait_for_stop(queue, active_report, cpu, gpu);
+  if (stop_reason != RUN_STOP_GPU_FAILURE &&
+      stop_reason != RUN_STOP_WAIT_ERROR) {
     exit_status = 0;
   }
 
@@ -311,13 +388,32 @@ cleanup:
   cpu_kiln_request_stop(cpu);
   gpu_kiln_request_stop(gpu);
 
-  if (!cpu_kiln_join(cpu, cpu_error, sizeof(cpu_error))) {
-    fprintf(stderr, "corekiln: %s\n", cpu_error);
+  cpu_joined = cpu_kiln_join(cpu, cpu_error, sizeof(cpu_error));
+  gpu_joined = gpu_kiln_join(gpu, gpu_error, sizeof(gpu_error));
+  if (!cpu_joined || !gpu_joined) {
     exit_status = 1;
   }
-  if (!gpu_kiln_join(gpu, gpu_error, sizeof(gpu_error))) {
+  if (!gpu_joined) {
+    stop_reason = RUN_STOP_GPU_FAILURE;
+  }
+
+  if (active_report != NULL) {
+    struct timespec finished_at;
+    if (monotonic_now(&finished_at)) {
+      run_snapshot final_snapshot = take_snapshot(cpu, gpu);
+      run_report_observe(active_report, finished_at, final_snapshot);
+      run_report_print_final(active_report, finished_at, stop_reason,
+                             final_snapshot);
+    } else {
+      exit_status = 1;
+    }
+  }
+
+  if (!cpu_joined) {
+    fprintf(stderr, "corekiln: %s\n", cpu_error);
+  }
+  if (!gpu_joined) {
     fprintf(stderr, "corekiln: %s\n", gpu_error);
-    exit_status = 1;
   }
 
   cpu_kiln_destroy(cpu);

@@ -12,6 +12,8 @@ class CorekilnTest < Minitest::Test
     src/corekiln.c
     src/cpu_kiln.c
     src/gpu_kiln.m
+    src/run_report.c
+    src/system_thermal.m
   ].map { |path| File.join(ROOT, path) }.freeze
   COMPILER_FLAGS = %w[
     -std=c11
@@ -106,6 +108,8 @@ class CorekilnTest < Minitest::Test
         "--both",
         "--workers",
         "1",
+        "--status",
+        "10",
       ) do |stdin, stdout, stderr, wait|
         stdin.close
         begin
@@ -120,7 +124,9 @@ class CorekilnTest < Minitest::Test
           Timeout.timeout(5) { wait.join }
 
           assert wait.value.success?, stderr.read
-          assert_includes stdout.read, "corekiln: stopped"
+          remaining_output = stdout.read
+          assert_match(/corekiln: report .*stop=interrupt/, remaining_output)
+          assert_includes remaining_output, "corekiln: stopped"
         ensure
           if wait.alive?
             begin
@@ -132,6 +138,137 @@ class CorekilnTest < Minitest::Test
           end
         end
       end
+    end
+  end
+
+  def test_termination_reports_terminate_stop_reason
+    with_compiled_corekiln do |binary|
+      Open3.popen3(
+        binary,
+        "--cpu",
+        "--workers",
+        "1",
+        "--status",
+        "10",
+      ) do |stdin, stdout, stderr, wait|
+        stdin.close
+        begin
+          startup = Timeout.timeout(5) { stdout.gets }
+          assert_equal(
+            "corekiln: burning CPU (1 worker) until interrupted\n",
+            startup,
+          )
+
+          Process.kill("TERM", wait.pid)
+          Timeout.timeout(5) { wait.join }
+
+          assert wait.value.success?, stderr.read
+          remaining_output = stdout.read
+          assert_match(
+            /corekiln: report .*stop=terminate/,
+            remaining_output,
+          )
+          assert_includes remaining_output, "corekiln: stopped"
+        ensure
+          if wait.alive?
+            begin
+              Process.kill("KILL", wait.pid)
+            rescue Errno::ESRCH
+              nil
+            end
+            wait.join(2)
+          end
+        end
+      end
+    end
+  end
+
+  def test_status_reports_cpu_progress_and_duration_stop
+    with_compiled_corekiln do |binary|
+      stdout, stderr, status = Open3.capture3(
+        binary,
+        "--cpu",
+        "--workers",
+        "1",
+        "--duration",
+        "2",
+        "--status",
+        "1",
+      )
+
+      assert status.success?, stderr
+      assert_match(
+        /corekiln: status elapsed=\d+\.\ds thermal=(?:unknown|nominal|fair|serious|critical) cpu_work_units=[1-9]\d*/,
+        stdout,
+      )
+      assert_match(
+        /corekiln: report elapsed=\d+\.\ds stop=duration .*cpu_work_units=[1-9]\d*/,
+        stdout,
+      )
+      assert_operator(
+        stdout.index("corekiln: report"),
+        :<,
+        stdout.index("corekiln: stopped"),
+      )
+    end
+  end
+
+  def test_short_gpu_run_still_prints_final_report
+    with_compiled_corekiln do |binary|
+      stdout, stderr, status = Open3.capture3(
+        binary,
+        "--gpu",
+        "--duration",
+        "1",
+        "--status",
+        "10",
+      )
+
+      assert status.success?, stderr
+      refute_includes stdout, "corekiln: status"
+      assert_match(
+        /corekiln: report .*stop=duration .*gpu_dispatches=[1-9]\d*/,
+        stdout,
+      )
+    end
+  end
+
+  def test_combined_report_contains_both_progress_counters
+    with_compiled_corekiln do |binary|
+      stdout, stderr, status = Open3.capture3(
+        binary,
+        "--both",
+        "--workers",
+        "1",
+        "--duration",
+        "1",
+        "--status",
+        "10",
+      )
+
+      assert status.success?, stderr
+      assert_match(
+        /corekiln: report .*cpu_work_units=[1-9]\d* gpu_dispatches=[1-9]\d*/,
+        stdout,
+      )
+    end
+  end
+
+  def test_engine_startup_failure_does_not_print_zero_work_report
+    fake_sources = SOURCES.reject { |source| source.end_with?("gpu_kiln.m") }
+    fake_sources << File.join(ROOT, "test/support/failing_gpu_kiln.c")
+
+    with_compiled_corekiln(sources: fake_sources) do |binary|
+      stdout, stderr, status = Open3.capture3(
+        binary,
+        "--gpu",
+        "--status",
+        "1",
+      )
+
+      refute status.success?
+      assert_includes stderr, "injected GPU preparation failure"
+      refute_includes stdout, "corekiln: report"
     end
   end
 
@@ -334,14 +471,14 @@ class CorekilnTest < Minitest::Test
     end
   end
 
-  def with_compiled_corekiln
+  def with_compiled_corekiln(sources: SOURCES)
     Dir.mktmpdir("corekiln-test") do |directory|
       binary = File.join(directory, "corekiln")
       _stdout, stderr, status = Open3.capture3(
         "xcrun",
         "clang",
         *COMPILER_FLAGS,
-        *SOURCES,
+        *sources,
         "-framework",
         "Foundation",
         "-framework",
