@@ -48,7 +48,7 @@ Foundation `NSProcessInfo`, Metal, Ruby Minitest, Apple Clang
 - Modify: `test/corekiln_test.rb`
 - Modify: `src/corekiln.c`
 
-- [ ] **Step 1: Write failing help and validation tests**
+- [x] **Step 1: Write failing help and validation tests**
 
 Add `--status SECONDS` to `test_help_describes_the_command`:
 
@@ -71,7 +71,7 @@ Extend `test_rejects_missing_values_and_unknown_options`:
 [%w[--status], "--status requires a positive integer"],
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run:
 
@@ -82,7 +82,7 @@ rtk ruby test/corekiln_test.rb --name '/help|rejects/'
 Expected: failures because help omits `--status`, valid status is unknown, and
 invalid status values produce the unknown-option error.
 
-- [ ] **Step 3: Add status option state and parsing**
+- [x] **Step 3: Add status option state and parsing**
 
 Add two fields to `options`:
 
@@ -116,7 +116,7 @@ if (strcmp(argument, "--status") == 0) {
 Do not change runtime output yet. This commit defines only the accepted
 interface.
 
-- [ ] **Step 4: Run focused and full tests and verify GREEN**
+- [x] **Step 4: Run focused and full tests and verify GREEN**
 
 Run:
 
@@ -129,7 +129,7 @@ rtk git diff --check
 Expected: all existing tests pass; `--status` is accepted but does not yet
 produce reporting output.
 
-- [ ] **Step 5: Commit the option contract**
+- [x] **Step 5: Commit the option contract**
 
 ```sh
 rtk git add src/corekiln.c test/corekiln_test.rb
@@ -147,7 +147,7 @@ rtk git commit -m "Add Corekiln status option"
 - Modify: `src/gpu_kiln.h`
 - Modify: `src/gpu_kiln.m`
 
-- [ ] **Step 1: Add native progress harnesses**
+- [x] **Step 1: Add native progress harnesses**
 
 Create `test/support/cpu_progress_harness.c`:
 
@@ -278,7 +278,7 @@ def compile_and_run_harness(
 end
 ```
 
-- [ ] **Step 2: Run progress tests and verify RED**
+- [x] **Step 2: Run progress tests and verify RED**
 
 Run:
 
@@ -290,7 +290,7 @@ Expected: compile failures because
 `cpu_kiln_completed_work_units` and `gpu_kiln_completed_dispatches` are
 undefined.
 
-- [ ] **Step 3: Implement CPU work publication**
+- [x] **Step 3: Implement CPU work publication**
 
 Include `<stdint.h>` in `src/cpu_kiln.h` and add:
 
@@ -364,7 +364,7 @@ uint64_t cpu_kiln_completed_work_units(const cpu_kiln *kiln) {
 }
 ```
 
-- [ ] **Step 4: Expose GPU completions**
+- [x] **Step 4: Expose GPU completions**
 
 Add to `src/gpu_kiln.h`:
 
@@ -392,7 +392,7 @@ uint64_t gpu_kiln_completed_dispatches(const gpu_kiln *kiln) {
 }
 ```
 
-- [ ] **Step 5: Run progress and full tests and verify GREEN**
+- [x] **Step 5: Run progress and full tests and verify GREEN**
 
 Run:
 
@@ -405,7 +405,7 @@ rtk git diff --check
 Expected: both native harnesses complete positive work, and all existing tests
 still pass.
 
-- [ ] **Step 6: Commit engine progress**
+- [x] **Step 6: Commit engine progress**
 
 ```sh
 rtk git add src/cpu_kiln.c src/cpu_kiln.h src/gpu_kiln.h src/gpu_kiln.m \
@@ -424,7 +424,7 @@ rtk git commit -m "Expose Corekiln engine progress"
 - Create: `test/support/run_report_harness.c`
 - Modify: `test/corekiln_test.rb`
 
-- [ ] **Step 1: Write a deterministic report harness**
+- [x] **Step 1: Write a deterministic report harness**
 
 Create `test/support/run_report_harness.c`:
 
@@ -500,7 +500,7 @@ def test_run_report_tracks_deadlines_and_peak_thermal_state
 end
 ```
 
-- [ ] **Step 2: Run the report test and verify RED**
+- [x] **Step 2: Run the report test and verify RED**
 
 Run:
 
@@ -511,7 +511,7 @@ rtk ruby test/corekiln_test.rb \
 
 Expected: compile failure because the report and thermal files do not exist.
 
-- [ ] **Step 3: Add the public thermal bridge**
+- [x] **Step 3: Add the public thermal bridge**
 
 Create `src/system_thermal.h`:
 
@@ -571,7 +571,7 @@ const char *system_thermal_name(system_thermal_state state) {
 }
 ```
 
-- [ ] **Step 4: Add the deterministic reporter API**
+- [x] **Step 4: Add the deterministic reporter API**
 
 Create `src/run_report.h`:
 
@@ -729,7 +729,7 @@ void run_report_print_final(const run_report *report, struct timespec now,
 }
 ```
 
-- [ ] **Step 5: Run report and full tests and verify GREEN**
+- [x] **Step 5: Run report and full tests and verify GREEN**
 
 Run:
 
@@ -743,7 +743,7 @@ rtk git diff --check
 Expected: deterministic status and final lines match exactly; existing CLI tests
 remain green.
 
-- [ ] **Step 6: Commit report primitives**
+- [x] **Step 6: Commit report primitives**
 
 ```sh
 rtk git add src/run_report.c src/run_report.h src/system_thermal.h \
@@ -760,7 +760,7 @@ rtk git commit -m "Add Corekiln run reporter"
 - Modify: `src/corekiln.c`
 - Modify: `bin/corekiln`
 
-- [ ] **Step 1: Add failing end-to-end reporting tests**
+- [x] **Step 1: Add failing end-to-end reporting tests**
 
 Add a CPU periodic test:
 
@@ -1003,7 +1003,7 @@ end
 
 Add `src/run_report.c` and `src/system_thermal.m` to `SOURCES`.
 
-- [ ] **Step 2: Run reporting tests and verify RED**
+- [x] **Step 2: Run reporting tests and verify RED**
 
 Run:
 
@@ -1014,7 +1014,7 @@ rtk ruby test/corekiln_test.rb --name '/status_reports|final_report|combined_rep
 Expected: failures because accepted status intervals are ignored and no report
 or progress lines are emitted.
 
-- [ ] **Step 3: Add event identifiers and snapshot capture**
+- [x] **Step 3: Add event identifiers and snapshot capture**
 
 In `src/corekiln.c`, include:
 
@@ -1070,7 +1070,7 @@ static bool arm_status_timer(int queue) {
 }
 ```
 
-- [ ] **Step 4: Replace boolean waiting with explicit stop reasons**
+- [x] **Step 4: Replace boolean waiting with explicit stop reasons**
 
 Replace `wait_for_stop` with:
 
@@ -1113,7 +1113,7 @@ static run_stop_reason wait_for_stop(int queue, run_report *report,
 }
 ```
 
-- [ ] **Step 5: Integrate reporter eligibility and final output**
+- [x] **Step 5: Integrate reporter eligibility and final output**
 
 In `run_kilns`, add:
 
@@ -1200,7 +1200,7 @@ if (!gpu_joined) {
 Destroy engines, close the queue, and preserve the existing rule that
 `corekiln: stopped` prints only when `exit_status == 0`.
 
-- [ ] **Step 6: Update direct and wrapper builds**
+- [x] **Step 6: Update direct and wrapper builds**
 
 Add to the Ruby `SOURCES` array:
 
@@ -1218,7 +1218,7 @@ Add freshness checks for all four new files in `bin/corekiln`, and compile:
 
 before the Foundation and Metal framework arguments.
 
-- [ ] **Step 7: Run focused and full tests and verify GREEN**
+- [x] **Step 7: Run focused and full tests and verify GREEN**
 
 Run:
 
@@ -1233,7 +1233,7 @@ Expected: periodic CPU status, short GPU final reporting, combined counters,
 interrupt and termination reasons, wrapper builds, and every previous behavior
 pass.
 
-- [ ] **Step 8: Commit coordinator integration**
+- [x] **Step 8: Commit coordinator integration**
 
 ```sh
 rtk git add bin/corekiln src/corekiln.c test/corekiln_test.rb \
@@ -1247,7 +1247,7 @@ rtk git commit -m "Report Corekiln run progress"
 - Modify: `README.md`
 - Modify: `docs/superpowers/plans/2026-07-31-corekiln-run-report.md`
 
-- [ ] **Step 1: Update user documentation**
+- [x] **Step 1: Update user documentation**
 
 Add `--status SECONDS` to the README help. Document:
 
@@ -1266,7 +1266,7 @@ Explain:
   and is not temperature; and
 - no private APIs or elevated privileges are used.
 
-- [ ] **Step 2: Run the complete automated suite**
+- [x] **Step 2: Run the complete automated suite**
 
 Run:
 
@@ -1276,7 +1276,7 @@ rtk ruby test/corekiln_test.rb
 
 Expected: zero failures and zero errors.
 
-- [ ] **Step 3: Run a strict direct build**
+- [x] **Step 3: Run a strict direct build**
 
 Run:
 
@@ -1291,7 +1291,7 @@ rtk xcrun clang -std=c11 -O2 -Wall -Wextra -Werror -pthread \
 
 Expected: exit 0 with no warning output.
 
-- [ ] **Step 4: Run all real reporting modes**
+- [x] **Step 4: Run all real reporting modes**
 
 Run:
 
@@ -1312,7 +1312,7 @@ Expected for every mode:
 - exactly one final report appears before `corekiln: stopped`; and
 - the process exits successfully after its requested duration.
 
-- [ ] **Step 5: Verify compatibility without status**
+- [x] **Step 5: Verify compatibility without status**
 
 Run:
 
@@ -1323,7 +1323,7 @@ rtk /tmp/corekiln-run-report-verification \
 
 Expected: only the existing startup and stopped lines; no status or report.
 
-- [ ] **Step 6: Check source and repository hygiene**
+- [x] **Step 6: Check source and repository hygiene**
 
 Run:
 
@@ -1336,14 +1336,14 @@ rtk git status --short
 Expected: clean syntax and diff. Before the documentation commit, status lists
 only README and this plan checklist.
 
-- [ ] **Step 7: Commit documentation and completion tracking**
+- [x] **Step 7: Commit documentation and completion tracking**
 
 ```sh
 rtk git add README.md docs/superpowers/plans/2026-07-31-corekiln-run-report.md
 rtk git commit -m "Document Corekiln run reporting"
 ```
 
-- [ ] **Step 8: Finish the branch**
+- [x] **Step 8: Finish the branch**
 
 Use `superpowers:verification-before-completion`, then
 `superpowers:finishing-a-development-branch`. Because the user requested

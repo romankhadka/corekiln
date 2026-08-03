@@ -40,6 +40,7 @@ Modes:
 Options:
   --workers N          Number of CPU worker threads
   --duration SECONDS   Stop after a positive whole number of seconds
+  --status SECONDS     Print progress every positive whole number of seconds
   --help               Show this help
 ```
 
@@ -60,7 +61,31 @@ bin/corekiln --gpu --duration 10
 
 # Load every active logical CPU and the GPU for ten seconds
 bin/corekiln --both --duration 10
+
+# Also print progress every two seconds and a final run report
+bin/corekiln --both --duration 10 --status 2
 ```
+
+## Run reports
+
+Pass `--status SECONDS` to print periodic progress and a final report after the
+selected engines have stopped and drained their work:
+
+```text
+corekiln: status elapsed=5.0s thermal=nominal cpu_work_units=824193 gpu_dispatches=71
+corekiln: report elapsed=60.2s stop=duration peak_thermal=serious serious_at=23.0s cpu_work_units=9912461 gpu_dispatches=847
+```
+
+One CPU work unit is one completed 4,096-iteration arithmetic batch. One GPU
+dispatch is one successfully completed Metal command buffer. These counters
+show that the selected engines are making forward progress; they are not
+utilization percentages or benchmark scores.
+
+Thermal pressure is the qualitative state reported by macOS: `nominal`,
+`fair`, `serious`, or `critical` (`unknown` is used if no known state is
+available). It is not a temperature reading. Corekiln uses only public APIs and
+does not require elevated privileges. Without `--status`, output remains the
+startup line followed by `corekiln: stopped`.
 
 Activity Monitor reports CPU usage per logical CPU, so a process occupying
 eight logical CPUs can appear near 800 percent. Frequency may fall after macOS
