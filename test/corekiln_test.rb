@@ -271,7 +271,49 @@ class CorekilnTest < Minitest::Test
     end
   end
 
+  def test_cpu_engine_exposes_completed_work
+    compile_and_run_harness(
+      "test/support/cpu_progress_harness.c",
+      "src/cpu_kiln.c",
+    )
+  end
+
+  def test_gpu_engine_exposes_completed_dispatches
+    compile_and_run_harness(
+      "test/support/gpu_progress_harness.c",
+      "src/gpu_kiln.m",
+      frameworks: %w[Foundation Metal],
+    )
+  end
+
   private
+
+  def compile_and_run_harness(
+    harness,
+    *sources,
+    frameworks: [],
+    capture_output: false
+  )
+    Dir.mktmpdir("corekiln-harness") do |directory|
+      binary = File.join(directory, "harness")
+      arguments = [
+        "xcrun",
+        "clang",
+        *COMPILER_FLAGS,
+        File.join(ROOT, harness),
+        *sources.map { |source| File.join(ROOT, source) },
+        *frameworks.flat_map { |framework| ["-framework", framework] },
+        "-o",
+        binary,
+      ]
+      _stdout, stderr, status = Open3.capture3(*arguments)
+      assert status.success?, "Compilation failed:\n#{stderr}"
+
+      stdout, stderr, status = Open3.capture3(binary)
+      assert status.success?, "Harness failed:\n#{stderr}"
+      return [stdout, stderr] if capture_output
+    end
+  end
 
   def with_compiled_corekiln
     Dir.mktmpdir("corekiln-test") do |directory|

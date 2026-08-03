@@ -50,7 +50,7 @@ static void set_error(char *error, size_t error_size, const char *format, ...) {
   BOOL _thread_started;
   BOOL _joined;
   atomic_bool _stop_requested;
-  atomic_uint _completed_commands;
+  atomic_uint_fast64_t _completed_commands;
 
   id<MTLDevice> _device;
   id<MTLLibrary> _library;
@@ -365,4 +365,14 @@ void gpu_kiln_destroy(gpu_kiln *kiln) {
 
 const char *gpu_kiln_device_name(const gpu_kiln *kiln) {
   return kiln == NULL ? "" : [state_for((gpu_kiln *)kiln) deviceName];
+}
+
+uint64_t gpu_kiln_completed_dispatches(const gpu_kiln *kiln) {
+  if (kiln == NULL) {
+    return 0;
+  }
+
+  CorekilnGPUState *state = state_for((gpu_kiln *)kiln);
+  return atomic_load_explicit(&state->_completed_commands,
+                              memory_order_relaxed);
 }

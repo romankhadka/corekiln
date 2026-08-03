@@ -12,6 +12,7 @@ typedef struct {
   struct cpu_kiln *kiln;
   uint64_t seed;
   volatile uint64_t sink;
+  atomic_uint_fast64_t completed_work_units;
 } worker_context;
 
 struct cpu_kiln {
@@ -38,6 +39,7 @@ static void set_error(char *error, size_t error_size, const char *format, ...) {
 static void *burn_cpu(void *argument) {
   worker_context *context = argument;
   uint64_t state = context->seed;
+  uint64_t completed_work_units = 0;
 
   while (!atomic_load_explicit(&context->kiln->stop_requested,
                                memory_order_relaxed)) {
@@ -48,8 +50,15 @@ static void *burn_cpu(void *argument) {
       state *= UINT64_C(0x9e3779b97f4a7c15);
     }
     context->sink = state;
+    completed_work_units++;
+    if ((completed_work_units & UINT64_C(255)) == 0) {
+      atomic_store_explicit(&context->completed_work_units,
+                            completed_work_units, memory_order_relaxed);
+    }
   }
 
+  atomic_store_explicit(&context->completed_work_units,
+                        completed_work_units, memory_order_relaxed);
   return NULL;
 }
 
@@ -74,6 +83,10 @@ cpu_kiln *cpu_kiln_create(size_t worker_count, char *error,
     return NULL;
   }
 
+  for (size_t index = 0; index < worker_count; index++) {
+    atomic_init(&kiln->contexts[index].completed_work_units, 0);
+  }
+
   kiln->worker_count = worker_count;
   kiln->joined = true;
   atomic_init(&kiln->stop_requested, false);
@@ -94,6 +107,8 @@ bool cpu_kiln_start(cpu_kiln *kiln, char *error, size_t error_size) {
     kiln->contexts[index].kiln = kiln;
     kiln->contexts[index].seed =
         UINT64_C(0x9e3779b97f4a7c15) ^ (uint64_t)(index + 1);
+    atomic_store_explicit(&kiln->contexts[index].completed_work_units, 0,
+                          memory_order_relaxed);
 
     int thread_error = pthread_create(&kiln->threads[index], NULL, burn_cpu,
                                       &kiln->contexts[index]);
@@ -153,4 +168,17 @@ void cpu_kiln_destroy(cpu_kiln *kiln) {
 
 size_t cpu_kiln_worker_count(const cpu_kiln *kiln) {
   return kiln == NULL ? 0 : kiln->worker_count;
+}
+
+uint64_t cpu_kiln_completed_work_units(const cpu_kiln *kiln) {
+  if (kiln == NULL) {
+    return 0;
+  }
+
+  uint64_t completed = 0;
+  for (size_t index = 0; index < kiln->worker_count; index++) {
+    completed += atomic_load_explicit(
+        &kiln->contexts[index].completed_work_units, memory_order_relaxed);
+  }
+  return completed;
 }

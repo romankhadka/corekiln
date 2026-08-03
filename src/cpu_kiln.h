@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 typedef struct cpu_kiln cpu_kiln;
 
@@ -13,5 +14,6 @@ void cpu_kiln_request_stop(cpu_kiln *kiln);
 bool cpu_kiln_join(cpu_kiln *kiln, char *error, size_t error_size);
 void cpu_kiln_destroy(cpu_kiln *kiln);
 size_t cpu_kiln_worker_count(const cpu_kiln *kiln);
+uint64_t cpu_kiln_completed_work_units(const cpu_kiln *kiln);
 
 #endif
