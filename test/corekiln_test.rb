@@ -36,6 +36,7 @@ class CorekilnTest < Minitest::Test
       assert_includes stdout, "Default: --both"
       assert_includes stdout, "--workers N"
       assert_includes stdout, "--duration SECONDS"
+      assert_includes stdout, "--status SECONDS"
       assert_empty stderr
     end
   end
@@ -47,6 +48,10 @@ class CorekilnTest < Minitest::Test
         [%w[--workers many], "--workers requires a positive integer"],
         [%w[--duration 0], "--duration requires a positive integer"],
         [%w[--duration forever], "--duration requires a positive integer"],
+        [%w[--status 0], "--status requires a positive integer"],
+        [%w[--status -1], "--status requires a positive integer"],
+        [%w[--status often], "--status requires a positive integer"],
+        [%w[--status 4294967296], "--status requires a positive integer"],
       ].each do |arguments, expected_error|
         _stdout, stderr, status = Open3.capture3(binary, *arguments)
 
@@ -61,6 +66,7 @@ class CorekilnTest < Minitest::Test
       [
         [%w[--workers], "--workers requires a positive integer"],
         [%w[--duration], "--duration requires a positive integer"],
+        [%w[--status], "--status requires a positive integer"],
         [%w[--unknown], "unknown option: --unknown"],
       ].each do |arguments, expected_error|
         _stdout, stderr, status = Open3.capture3(binary, *arguments)

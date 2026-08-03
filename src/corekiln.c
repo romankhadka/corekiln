@@ -25,8 +25,10 @@ typedef struct {
   bool mode_set;
   size_t worker_count;
   unsigned int duration_seconds;
+  unsigned int status_seconds;
   bool worker_count_set;
   bool duration_set;
+  bool status_set;
 } options;
 
 static const uintptr_t GPU_FAILURE_EVENT = 2;
@@ -45,6 +47,8 @@ static void print_usage(void) {
   puts("Options:");
   puts("  --workers N          Number of CPU worker threads");
   puts("  --duration SECONDS   Stop after a positive whole number of seconds");
+  puts("  --status SECONDS     Print progress every positive whole number of "
+       "seconds");
   puts("  --help               Show this help");
 }
 
@@ -125,6 +129,17 @@ static bool parse_options(int argc, char *argv[], options *parsed) {
       }
       parsed->duration_seconds = (unsigned int)duration;
       parsed->duration_set = true;
+      continue;
+    }
+    if (strcmp(argument, "--status") == 0) {
+      uintmax_t status = 0;
+      if (++index >= argc ||
+          !parse_positive_integer(argv[index], UINT_MAX, &status)) {
+        fputs("corekiln: --status requires a positive integer\n", stderr);
+        return false;
+      }
+      parsed->status_seconds = (unsigned int)status;
+      parsed->status_set = true;
       continue;
     }
 
