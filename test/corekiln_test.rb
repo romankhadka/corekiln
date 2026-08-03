@@ -286,6 +286,25 @@ class CorekilnTest < Minitest::Test
     )
   end
 
+  def test_run_report_tracks_deadlines_and_peak_thermal_state
+    stdout, = compile_and_run_harness(
+      "test/support/run_report_harness.c",
+      "src/run_report.c",
+      "src/system_thermal.m",
+      frameworks: %w[Foundation],
+      capture_output: true,
+    )
+
+    assert_equal(
+      [
+        "corekiln: status elapsed=5.0s thermal=fair cpu_work_units=10",
+        "corekiln: report elapsed=10.0s stop=duration " \
+          "peak_thermal=critical serious_at=8.0s cpu_work_units=20",
+      ],
+      stdout.lines(chomp: true),
+    )
+  end
+
   private
 
   def compile_and_run_harness(
